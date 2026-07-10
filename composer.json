@@ -1,0 +1,64 @@
+{
+    "name": "wiserwebsolutions/laravel-lobbyist-ai",
+    "description": "AI layer for laravel-lobbyist: summarize, classify, and ask questions about legislative data with the Laravel AI SDK.",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Daniel Wiser",
+            "email": "dan@wiserwebsolutions.com"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "illuminate/support": "^13.0",
+        "illuminate/database": "^13.0",
+        "laravel/ai": "*",
+        "spatie/laravel-data": "^4.20",
+        "wiserwebsolutions/laravel-lobbyist": "*"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^11.0",
+        "phpunit/phpunit": "^12.0",
+        "laravel/pint": "^1.14",
+        "mockery/mockery": "^1.6"
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../laravel-lobbyist",
+            "options": {
+                "symlink": true
+            }
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "WiserWebSolutions\\Lobbyist\\Ai\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "WiserWebSolutions\\Lobbyist\\Ai\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/phpunit",
+        "format": "vendor/bin/pint"
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "WiserWebSolutions\\Lobbyist\\Ai\\LobbyistAiServiceProvider"
+            ],
+            "aliases": {
+                "LobbyistAi": "WiserWebSolutions\\Lobbyist\\Ai\\Facades\\LobbyistAi"
+            }
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
