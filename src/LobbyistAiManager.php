@@ -81,7 +81,6 @@ class LobbyistAiManager
         return (string) $this->assistant($state)->prompt(
             $question,
             provider: $this->textProvider(),
-            model: $this->textModel(),
         );
     }
 
@@ -93,7 +92,6 @@ class LobbyistAiManager
         return $this->assistant($state)->stream(
             $question,
             provider: $this->textProvider(),
-            model: $this->textModel(),
         );
     }
 
@@ -190,13 +188,12 @@ class LobbyistAiManager
         return $agent->prompt(
             $prompt,
             provider: $this->textProvider(),
-            model: $this->textModel(),
         )->toArray();
     }
 
     /**
      * Generate embedding vectors for the given texts using the configured
-     * (non-Anthropic) embeddings provider.
+     * embeddings provider (falls back to Laravel AI's own default).
      *
      * @param  array<int, string>  $texts
      * @return array<int, array<int, float>>
@@ -210,8 +207,7 @@ class LobbyistAiManager
         }
 
         return $pending->generate(
-            $this->config['embeddings']['provider'] ?? 'openai',
-            $this->config['embeddings']['model'] ?: null,
+            $this->config['embeddings']['provider'] ?? null,
         )->embeddings;
     }
 
@@ -220,14 +216,9 @@ class LobbyistAiManager
         return app(EmbeddingStore::class);
     }
 
-    protected function textProvider(): string
+    protected function textProvider(): ?string
     {
-        return $this->config['text']['provider'] ?? 'anthropic';
-    }
-
-    protected function textModel(): ?string
-    {
-        return $this->config['text']['model'] ?? null;
+        return $this->config['text']['provider'] ?? null;
     }
 
     /**
@@ -242,7 +233,7 @@ class LobbyistAiManager
         }
 
         return Cache::store($cache['store'] ?? null)->remember(
-            'lobbyist-ai:'.md5($this->textModel().'|'.$key),
+            'lobbyist-ai:'.md5($key),
             (int) ($cache['ttl'] ?? 86400),
             $producer,
         );

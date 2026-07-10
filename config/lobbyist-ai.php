@@ -7,35 +7,39 @@
 |
 | This package layers AI features (summaries, classification, natural-language
 | Q&A, and semantic search) over the Lobbyist drivers using the Laravel AI SDK
-| (laravel/ai). Configure the AI providers here. Text/reasoning runs on an
-| Anthropic (Claude) model by default; embeddings must use a provider that
-| offers an embeddings API (Anthropic does not) — OpenAI by default.
+| (laravel/ai). By default it defers entirely to your Laravel AI config
+| (config/ai.php) — the "default" provider for text and "default_for_embeddings"
+| provider for embeddings, each using that provider's own default model. The
+| options below only need to be set if you want this package to use a
+| different provider than the rest of your app.
 |
 */
 
 return [
     /*
     |--------------------------------------------------------------------------
-    | Text / Reasoning Model
+    | Text / Reasoning Provider
     |--------------------------------------------------------------------------
-    | Used for summaries, classification, and the Q&A agent.
+    | Used for summaries, classification, and the Q&A agent. Leave null to use
+    | Laravel AI's default provider (config('ai.default')) and its default
+    | text model.
     */
     'text' => [
-        'provider' => env('LOBBYIST_AI_TEXT_PROVIDER', 'anthropic'),
-        'model' => env('LOBBYIST_AI_TEXT_MODEL', 'claude-opus-4-8'),
+        'provider' => env('LOBBYIST_AI_TEXT_PROVIDER'),
     ],
 
     /*
     |--------------------------------------------------------------------------
-    | Embeddings Model (semantic search / RAG)
+    | Embeddings Provider (semantic search / RAG)
     |--------------------------------------------------------------------------
-    | Anthropic has no embeddings API, so this uses a different provider.
-    | Leave model null to use the provider's configured default.
+    | Leave null to use Laravel AI's default embeddings provider
+    | (config('ai.default_for_embeddings')) and its default embedding model.
     */
     'embeddings' => [
-        'provider' => env('LOBBYIST_AI_EMBED_PROVIDER', 'openai'),
-        'model' => env('LOBBYIST_AI_EMBED_MODEL'),
-        'dimensions' => (int) env('LOBBYIST_AI_EMBED_DIMENSIONS', 1536),
+        'provider' => env('LOBBYIST_AI_EMBED_PROVIDER'),
+        'dimensions' => env('LOBBYIST_AI_EMBED_DIMENSIONS') !== null
+            ? (int) env('LOBBYIST_AI_EMBED_DIMENSIONS')
+            : null,
     ],
 
     /*

@@ -23,14 +23,16 @@ Requires Laravel 13 (for `laravel/ai`) and at least one Lobbyist driver
 
 ### Configuration
 
-Text/reasoning runs on **Claude** by default; embeddings use a separate provider
-(Anthropic has no embeddings API):
+By default this package defers entirely to your `laravel/ai` configuration
+(`config/ai.php`) — text (summaries, classification, Q&A) uses `ai.default`,
+embeddings use `ai.default_for_embeddings`, and each uses that provider's own
+default model. Set up `laravel/ai` as normal and this package follows suit.
+
+To point this package at a *different* provider than the rest of your app
+(without changing your `ai.default`), override it here:
 
 ```dotenv
-ANTHROPIC_API_KEY=...            # text: summaries, classification, Q&A
-OPENAI_API_KEY=...               # embeddings for semantic search (or Voyage/Gemini/Cohere)
-
-LOBBYIST_AI_TEXT_MODEL=claude-opus-4-8
+LOBBYIST_AI_TEXT_PROVIDER=anthropic
 LOBBYIST_AI_EMBED_PROVIDER=openai
 LOBBYIST_AI_EMBED_DIMENSIONS=1536
 ```
