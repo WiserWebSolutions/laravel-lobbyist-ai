@@ -21,12 +21,12 @@ class RepresentativesTool implements Tool
     {
         $driver = Lobbyist::state((string) $request['state']);
 
-        if (! $driver->supports(Capability::ListRepresentatives)) {
+        if (! $driver->supports(Capability::ListLegislators)) {
             return ToolResult::unsupported($request['state'], 'list representatives');
         }
 
         return ToolResult::json(
-            $driver->representatives()->take(300)->map(fn (Legislator $legislator) => [
+            $driver->legislators()->take(300)->map(fn (Legislator $legislator) => [
                 'name' => $legislator->name,
                 'party' => $legislator->party->label(),
                 'chamber' => $legislator->chamber?->label(),

@@ -4,7 +4,7 @@ namespace WiserWebSolutions\Lobbyist\Ai\Tests\Fakes;
 
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillLookup;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\BillProvider;
-use WiserWebSolutions\Lobbyist\Contracts\Providers\RepresentativeProvider;
+use WiserWebSolutions\Lobbyist\Contracts\Providers\LegislatorProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\SessionProvider;
 use WiserWebSolutions\Lobbyist\Contracts\Providers\VoteProvider;
 use WiserWebSolutions\Lobbyist\Data\Bill;
@@ -26,7 +26,7 @@ use WiserWebSolutions\Lobbyist\Support\AbstractDriver;
  * + lookup, votes, representatives, and sessions (but not vote/rep lookup, so
  * the "unsupported" guards can be tested too).
  */
-class FakeStateDriver extends AbstractDriver implements BillLookup, BillProvider, RepresentativeProvider, SessionProvider, VoteProvider
+class FakeStateDriver extends AbstractDriver implements BillLookup, BillProvider, LegislatorProvider, SessionProvider, VoteProvider
 {
     public function bills(): BillCollection
     {
@@ -66,7 +66,7 @@ class FakeStateDriver extends AbstractDriver implements BillLookup, BillProvider
         ]);
     }
 
-    public function representatives(): LegislatorCollection
+    public function legislators(): LegislatorCollection
     {
         return new LegislatorCollection([
             new Legislator(meta: [
@@ -74,6 +74,16 @@ class FakeStateDriver extends AbstractDriver implements BillLookup, BillProvider
                 'chamber' => Chamber::House, 'district' => '174', 'state' => StateEnum::PA,
             ]),
         ]);
+    }
+
+    public function representatives(): LegislatorCollection
+    {
+        return $this->legislators()->byChamber(Chamber::House);
+    }
+
+    public function senators(): LegislatorCollection
+    {
+        return $this->legislators()->byChamber(Chamber::Senate);
     }
 
     public function sessions(): SessionCollection
