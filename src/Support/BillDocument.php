@@ -3,6 +3,8 @@
 namespace WiserWebSolutions\Lobbyist\Ai\Support;
 
 use WiserWebSolutions\Lobbyist\Data\Bill;
+use WiserWebSolutions\Lobbyist\Data\Legislator;
+use WiserWebSolutions\Lobbyist\Data\LegislatorCollection;
 use WiserWebSolutions\Lobbyist\Data\Vote;
 
 /**
@@ -77,7 +79,13 @@ class BillDocument
     }
 
     /**
-     * Best-effort sponsor extraction from a driver's raw payload.
+     * Best-effort sponsor extraction.
+     *
+     * Three shapes occur in practice and all three have to work: normalized
+     * Legislator DTOs, which is what a mapper produces now that sponsors are
+     * mapped; raw payload arrays, from a driver response that was never
+     * normalized; and plain strings. The unconditional string cast this used to
+     * end with was fatal on the first of those.
      *
      * @return array<int, string>
      */
@@ -85,16 +93,24 @@ class BillDocument
     {
         $sponsors = $meta['sponsors'] ?? null;
 
+        if ($sponsors instanceof LegislatorCollection) {
+            $sponsors = $sponsors->all();
+        }
+
         if (! is_array($sponsors) || $sponsors === []) {
             return [];
         }
 
         $names = array_map(function ($sponsor) {
+            if ($sponsor instanceof Legislator) {
+                return $sponsor->name;
+            }
+
             if (is_array($sponsor)) {
                 return (string) ($sponsor['name'] ?? $sponsor['last_name'] ?? '');
             }
 
-            return (string) $sponsor;
+            return is_scalar($sponsor) ? (string) $sponsor : '';
         }, $sponsors);
 
         $names = array_values(array_filter($names, fn ($n) => $n !== ''));
