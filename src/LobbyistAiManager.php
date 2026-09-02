@@ -33,7 +33,7 @@ class LobbyistAiManager
      */
     public function summarizeBill(Bill $bill): array
     {
-        $key = 'summary:bill:'.$bill->state->abbr().':'.$bill->id.':'.($bill->lastActionDate?->getTimestamp() ?? 0);
+        $key = 'summary:bill:'.$bill->state->abbr().':'.$bill->id.':'.self::revisionOf($bill);
 
         return $this->remember($key, fn () => $this->runStructured(
             new BillSummaryAgent, BillDocument::forBill($bill)
@@ -61,7 +61,7 @@ class LobbyistAiManager
      */
     public function classifyBill(Bill $bill): array
     {
-        $key = 'classify:bill:'.$bill->state->abbr().':'.$bill->id.':'.($bill->lastActionDate?->getTimestamp() ?? 0);
+        $key = 'classify:bill:'.$bill->state->abbr().':'.$bill->id.':'.self::revisionOf($bill);
 
         return $this->remember($key, fn () => $this->runStructured(
             new BillClassifierAgent, BillDocument::forBill($bill)
@@ -224,6 +224,22 @@ class LobbyistAiManager
     /**
      * Run a producer through the configured cache, or directly if disabled.
      */
+    /**
+     * A marker that moves when the bill does, for cache keying.
+     *
+     * Prefers changeHash, the source's own revision marker. lastActionDate was
+     * the original choice and is unusable on its own: LegiScan's getBill payload
+     * carries a history array but no last-action date, so the DTO's is null for
+     * every bill it maps -- a whole 4,963-bill session verified at zero. Keying
+     * on that meant a summary generated the day a bill was introduced was still
+     * being served after it was amended, passed and signed.
+     */
+    protected static function revisionOf(Bill $bill): string
+    {
+        return $bill->changeHash
+            ?? (string) ($bill->lastActionDate?->getTimestamp() ?? 0);
+    }
+
     protected function remember(string $key, callable $producer): mixed
     {
         $cache = $this->config['cache'] ?? [];
