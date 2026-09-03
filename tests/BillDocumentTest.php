@@ -6,6 +6,8 @@ use WiserWebSolutions\Lobbyist\Ai\Support\BillDocument;
 use WiserWebSolutions\Lobbyist\Data\Bill;
 use WiserWebSolutions\Lobbyist\Data\Legislator;
 use WiserWebSolutions\Lobbyist\Data\LegislatorCollection;
+use WiserWebSolutions\Lobbyist\Data\Vote;
+use WiserWebSolutions\Lobbyist\Enums\Chamber;
 
 class BillDocumentTest extends TestCase
 {
@@ -69,5 +71,92 @@ class BillDocumentTest extends TestCase
     public function test_a_bill_without_sponsors_renders_without_the_line(): void
     {
         $this->assertStringNotContainsString('Sponsors:', BillDocument::forBill($this->bill()));
+    }
+
+    public function test_it_renders_action_history_nested_under_raw(): void
+    {
+        // The shape LegiscanMapper::bill() actually produces: the untouched
+        // driver payload preserved under `raw`, not promoted to the top
+        // level. This is the regression test for that gap.
+        $document = BillDocument::forBill($this->bill([
+            'raw' => ['history' => [['date' => '2026-01-08', 'action' => 'Referred to Education']]],
+        ]));
+
+        $this->assertStringContainsString('Action history:', $document);
+        $this->assertStringContainsString('2026-01-08 — Referred to Education', $document);
+    }
+
+    public function test_a_top_level_history_still_takes_priority_over_raw(): void
+    {
+        $document = BillDocument::forBill($this->bill([
+            'history' => [['date' => '2026-02-01', 'action' => 'Top level']],
+            'raw' => ['history' => [['date' => '2026-01-08', 'action' => 'Nested']]],
+        ]));
+
+        $this->assertStringContainsString('Top level', $document);
+        $this->assertStringNotContainsString('Nested', $document);
+    }
+
+    public function test_it_renders_votes(): void
+    {
+        $document = BillDocument::forBill($this->bill([
+            'votes' => [new Vote(meta: [
+                'id' => 1, 'chamber' => Chamber::House, 'date' => '2026-03-01',
+                'description' => 'Third consideration', 'yea' => 120, 'nay' => 80, 'passed' => true,
+            ])],
+        ]));
+
+        $this->assertStringContainsString('Votes:', $document);
+        $this->assertStringContainsString('House vote on 2026-03-01', $document);
+        $this->assertStringContainsString('120 yea, 80 nay', $document);
+        $this->assertStringContainsString('passed', $document);
+    }
+
+    public function test_a_bill_without_votes_renders_without_the_section(): void
+    {
+        $this->assertStringNotContainsString('Votes:', BillDocument::forBill($this->bill()));
+    }
+
+    public function test_it_still_renders_the_standalone_vote_document_unchanged(): void
+    {
+        $document = BillDocument::forVote(new Vote(meta: [
+            'id' => 1, 'chamber' => Chamber::House, 'date' => '2026-03-01',
+            'description' => 'Third consideration', 'yea' => 120, 'nay' => 80, 'passed' => true,
+        ]));
+
+        $this->assertSame(
+            "Vote (House) on 2026-03-01\nDescription: Third consideration\nTally: 120 yea, 80 nay\nResult: passed",
+            $document,
+        );
+    }
+
+    public function test_it_renders_official_documents_from_the_top_level(): void
+    {
+        $document = BillDocument::forBill($this->bill([
+            'supplements' => [
+                ['description' => 'Fiscal Note', 'type' => 'Fiscal Note', 'date' => '2026-01-15', 'url' => 'https://example.test/fn.pdf'],
+            ],
+        ]));
+
+        $this->assertStringContainsString('Official documents', $document);
+        $this->assertStringContainsString('citations only, not fetched', $document);
+        $this->assertStringContainsString('Fiscal Note (Fiscal Note) — 2026-01-15: https://example.test/fn.pdf', $document);
+    }
+
+    public function test_it_renders_official_documents_nested_under_raw(): void
+    {
+        $document = BillDocument::forBill($this->bill([
+            'raw' => ['supplements' => [
+                ['description' => 'Actuarial Note', 'url' => 'https://example.test/an.pdf'],
+            ]],
+        ]));
+
+        $this->assertStringContainsString('Actuarial Note', $document);
+        $this->assertStringContainsString('https://example.test/an.pdf', $document);
+    }
+
+    public function test_a_bill_without_official_documents_renders_without_the_section(): void
+    {
+        $this->assertStringNotContainsString('Official documents', BillDocument::forBill($this->bill()));
     }
 }

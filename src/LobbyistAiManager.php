@@ -14,6 +14,7 @@ use WiserWebSolutions\Lobbyist\Ai\Support\BillDocument;
 use WiserWebSolutions\Lobbyist\Ai\Tools\BillSemanticSearchTool;
 use WiserWebSolutions\Lobbyist\Contracts\Capability;
 use WiserWebSolutions\Lobbyist\Data\Bill;
+use WiserWebSolutions\Lobbyist\Data\BillText;
 use WiserWebSolutions\Lobbyist\Data\Vote;
 use WiserWebSolutions\Lobbyist\Exceptions\LobbyistException;
 use WiserWebSolutions\Lobbyist\Facades\Lobbyist;
@@ -29,14 +30,29 @@ class LobbyistAiManager
     /**
      * Summarize a bill into a headline, plain-language summary, and key points.
      *
+     * `$attachments` lets a caller supply document content the DTO itself
+     * cannot carry generically -- most importantly the bill's full text.
+     * {@see BillText} rarely has bytes on
+     * it (most sources require a separate fetch per version, which is a
+     * metered, driver-specific concern this package knows nothing about), so
+     * a caller that has already fetched the documents passes them here
+     * rather than this method trying to fetch anything itself. Anything
+     * `Laravel\Ai\Promptable::prompt()`'s own `attachments` parameter accepts
+     * works, e.g. `Laravel\Ai\Files\Document::fromString(...)`.
+     *
+     * @param  array<int, mixed>  $attachments
      * @return array{headline: string, summary: string, key_points: array<int, string>}
      */
-    public function summarizeBill(Bill $bill): array
+    public function summarizeBill(Bill $bill, array $attachments = []): array
     {
-        $key = 'summary:bill:'.$bill->state->abbr().':'.$bill->id.':'.self::revisionOf($bill);
+        $key = 'summary:bill:'.$bill->state->abbr().':'.$bill->id.':'.self::revisionOf($bill)
+            // Attachments change what the model can say without moving the
+            // bill's own revision marker, so a metadata-only summary cached
+            // before they were available must not mask a richer one now.
+            .':attachments:'.count($attachments);
 
         return $this->remember($key, fn () => $this->runStructured(
-            new BillSummaryAgent, BillDocument::forBill($bill)
+            new BillSummaryAgent, BillDocument::forBill($bill), $attachments
         ));
     }
 
@@ -182,11 +198,14 @@ class LobbyistAiManager
 
     /**
      * Run a structured-output agent and return its validated array.
+     *
+     * @param  array<int, mixed>  $attachments
      */
-    protected function runStructured(object $agent, string $prompt): array
+    protected function runStructured(object $agent, string $prompt, array $attachments = []): array
     {
         return $agent->prompt(
             $prompt,
+            attachments: $attachments,
             provider: $this->textProvider(),
         )->toArray();
     }

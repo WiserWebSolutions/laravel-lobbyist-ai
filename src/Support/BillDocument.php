@@ -6,6 +6,7 @@ use WiserWebSolutions\Lobbyist\Data\Bill;
 use WiserWebSolutions\Lobbyist\Data\Legislator;
 use WiserWebSolutions\Lobbyist\Data\LegislatorCollection;
 use WiserWebSolutions\Lobbyist\Data\Vote;
+use WiserWebSolutions\Lobbyist\Legiscan\Support\LegiscanMapper;
 
 /**
  * Renders normalized DTOs into compact plain-text documents suitable for LLM
@@ -45,6 +46,24 @@ class BillDocument
             }
         }
 
+        $votes = $bill->votes();
+        if ($votes->isNotEmpty()) {
+            $lines[] = 'Votes:';
+            foreach ($votes as $vote) {
+                $lines[] = '- '.self::describeVote($vote);
+            }
+        }
+
+        $documents = self::officialDocuments($bill->meta);
+        if ($documents !== []) {
+            // Citations, not content: nothing here has been fetched or read,
+            // so the model must not describe one as though it had.
+            $lines[] = 'Official documents (fiscal notes, analyses -- citations only, not fetched):';
+            foreach ($documents as $entry) {
+                $lines[] = '- '.$entry;
+            }
+        }
+
         return implode("\n", $lines);
     }
 
@@ -61,21 +80,59 @@ class BillDocument
             $lines[] = "Related bill id: {$vote->billId}";
         }
 
-        $tallies = array_filter([
-            'yea' => $vote->yea,
-            'nay' => $vote->nay,
-            'not voting' => $vote->notVoting,
-            'absent' => $vote->absent,
-        ], fn ($v) => $v !== null);
-
-        if ($tallies !== []) {
-            $lines[] = 'Tally: '.implode(', ', array_map(fn ($k, $v) => "{$v} {$k}", array_keys($tallies), $tallies));
+        $tally = self::voteTally($vote);
+        if ($tally !== '') {
+            $lines[] = 'Tally: '.$tally;
         }
         if ($vote->passed !== null) {
             $lines[] = 'Result: '.($vote->passed ? 'passed' : 'failed');
         }
 
         return implode("\n", $lines);
+    }
+
+    /**
+     * One compact line summarizing a roll call, for the votes section of a
+     * bill document -- distinct from {@see self::forVote()}'s own multi-line
+     * rendering, which stays unchanged for the standalone vote document.
+     * Both read the tally the same way, via {@see self::voteTally()}.
+     */
+    private static function describeVote(Vote $vote): string
+    {
+        $chamber = $vote->chamber?->label();
+        $date = $vote->date?->toDateString();
+        $tally = self::voteTally($vote);
+        $result = $vote->passed === null ? null : ($vote->passed ? 'passed' : 'failed');
+
+        $prefix = trim(($chamber ? "{$chamber} " : '').'vote'.($date ? " on {$date}" : ''));
+
+        $details = implode(' — ', array_filter([
+            $vote->description !== '' ? $vote->description : null,
+            $tally,
+            $result,
+        ], fn ($part) => $part !== null && $part !== ''));
+
+        return $details === '' ? $prefix : "{$prefix}: {$details}";
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private static function voteTallies(Vote $vote): array
+    {
+        return array_filter([
+            'yea' => $vote->yea,
+            'nay' => $vote->nay,
+            'not voting' => $vote->notVoting,
+            'absent' => $vote->absent,
+        ], fn ($v) => $v !== null);
+    }
+
+    private static function voteTally(Vote $vote): string
+    {
+        $tallies = self::voteTallies($vote);
+
+        return $tallies === [] ? '' : implode(', ', array_map(fn ($k, $v) => "{$v} {$k}", array_keys($tallies), $tallies));
     }
 
     /**
@@ -121,11 +178,19 @@ class BillDocument
     /**
      * Best-effort action-history extraction (palegis "actions" / LegiScan "history").
      *
+     * Checked at the top level of `meta` first, then falls back to
+     * `meta['raw']` -- where a mapper that preserves the untouched driver
+     * payload under `raw` (as {@see LegiscanMapper::bill()}
+     * does) actually put it. Without the fallback this silently found
+     * nothing on every bill produced by that mapper, despite it being the
+     * production path.
+     *
      * @return array<int, string>
      */
     private static function actionHistory(array $meta): array
     {
-        $actions = $meta['actions'] ?? $meta['history'] ?? null;
+        $raw = is_array($meta['raw'] ?? null) ? $meta['raw'] : [];
+        $actions = $meta['actions'] ?? $meta['history'] ?? $raw['actions'] ?? $raw['history'] ?? null;
 
         if (! is_array($actions)) {
             return [];
@@ -148,6 +213,50 @@ class BillDocument
             if ($line !== '') {
                 $out[] = $line;
             }
+        }
+
+        return $out;
+    }
+
+    /**
+     * Best-effort fiscal note / analysis citation extraction (LegiScan
+     * "supplements"). No core DTO models these -- unlike sponsors, texts and
+     * votes, no source-agnostic shape has been needed elsewhere yet -- so
+     * this reads the raw payload directly, the same way {@see
+     * self::actionHistory()} does for a field with no dedicated accessor.
+     *
+     * Titles and links only: nothing here has been fetched, so there is
+     * nothing to summarize beyond citing that it exists.
+     *
+     * @return array<int, string>
+     */
+    private static function officialDocuments(array $meta): array
+    {
+        $raw = is_array($meta['raw'] ?? null) ? $meta['raw'] : [];
+        $documents = $meta['supplements'] ?? $raw['supplements'] ?? null;
+
+        if (! is_array($documents)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($documents as $document) {
+            if (! is_array($document)) {
+                continue;
+            }
+
+            $url = $document['state_link'] ?? $document['url'] ?? '';
+            if (! is_string($url) || $url === '') {
+                continue;
+            }
+
+            $title = (string) ($document['description'] ?? $document['title'] ?? 'Document');
+            $type = isset($document['type']) && $document['type'] !== '' ? " ({$document['type']})" : '';
+            $date = isset($document['date']) && $document['date'] !== '' && $document['date'] !== '0000-00-00'
+                ? ' — '.$document['date']
+                : '';
+
+            $out[] = "{$title}{$type}{$date}: {$url}";
         }
 
         return $out;

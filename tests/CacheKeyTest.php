@@ -3,6 +3,7 @@
 namespace WiserWebSolutions\Lobbyist\Ai\Tests;
 
 use Laravel\Ai\Ai;
+use Laravel\Ai\Files\Document;
 use WiserWebSolutions\Lobbyist\Ai\Agents\BillSummaryAgent;
 use WiserWebSolutions\Lobbyist\Data\Bill;
 
@@ -52,5 +53,27 @@ class CacheKeyTest extends TestCase
         $again = $this->manager()->summarizeBill($this->bill('hash-one'));
 
         $this->assertSame('Only once', $again['headline']);
+    }
+
+    public function test_a_bill_newly_given_attachments_is_not_served_the_metadata_only_cache(): void
+    {
+        config(['lobbyist-ai.cache.enabled' => true]);
+
+        Ai::fakeAgent(BillSummaryAgent::class, [
+            ['headline' => 'Metadata only', 'summary' => 'Without the text.', 'key_points' => []],
+            ['headline' => 'With full text', 'summary' => 'Read from the attachment.', 'key_points' => []],
+        ]);
+
+        // Same bill, same revision -- only whether the text was attached
+        // changes. The revisionOf() key alone would wrongly serve the first,
+        // metadata-only response to the second call.
+        $first = $this->manager()->summarizeBill($this->bill('hash-one'));
+        $second = $this->manager()->summarizeBill(
+            $this->bill('hash-one'),
+            [Document::fromString('pdf bytes', 'application/pdf')],
+        );
+
+        $this->assertSame('Metadata only', $first['headline']);
+        $this->assertSame('With full text', $second['headline']);
     }
 }

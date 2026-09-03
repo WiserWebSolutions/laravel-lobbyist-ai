@@ -3,6 +3,7 @@
 namespace WiserWebSolutions\Lobbyist\Ai\Tests;
 
 use Laravel\Ai\Ai;
+use Laravel\Ai\Files\Document;
 use WiserWebSolutions\Lobbyist\Ai\Agents\BillClassifierAgent;
 use WiserWebSolutions\Lobbyist\Ai\Agents\BillSummaryAgent;
 use WiserWebSolutions\Lobbyist\Ai\Agents\LegislativeAssistant;
@@ -31,6 +32,41 @@ class AiFeaturesTest extends TestCase
 
         $this->assertSame('Cursive handwriting mandate', $result['headline']);
         $this->assertCount(2, $result['key_points']);
+    }
+
+    public function test_summarize_bill_passes_attachments_through_to_the_agent(): void
+    {
+        Ai::fakeAgent(BillSummaryAgent::class, [
+            ['headline' => 'Cursive handwriting mandate', 'summary' => 'Read from the text.', 'key_points' => []],
+        ]);
+
+        $bill = Lobbyist::state('PA')->bill('HB100');
+
+        $this->manager()->summarizeBill($bill, [
+            Document::fromString('pdf bytes one', 'application/pdf'),
+            Document::fromString('pdf bytes two', 'application/pdf'),
+        ]);
+
+        Ai::assertAgentWasPrompted(
+            BillSummaryAgent::class,
+            fn ($prompt) => $prompt->attachments->count() === 2,
+        );
+    }
+
+    public function test_summarize_bill_defaults_to_no_attachments(): void
+    {
+        Ai::fakeAgent(BillSummaryAgent::class, [
+            ['headline' => 'Cursive handwriting mandate', 'summary' => 'Metadata only.', 'key_points' => []],
+        ]);
+
+        $bill = Lobbyist::state('PA')->bill('HB100');
+
+        $this->manager()->summarizeBill($bill);
+
+        Ai::assertAgentWasPrompted(
+            BillSummaryAgent::class,
+            fn ($prompt) => $prompt->attachments->isEmpty(),
+        );
     }
 
     public function test_classify_bill_returns_subjects_and_impact(): void
