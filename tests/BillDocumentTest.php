@@ -8,6 +8,7 @@ use WiserWebSolutions\Lobbyist\Data\Legislator;
 use WiserWebSolutions\Lobbyist\Data\LegislatorCollection;
 use WiserWebSolutions\Lobbyist\Data\Vote;
 use WiserWebSolutions\Lobbyist\Enums\Chamber;
+use WiserWebSolutions\Lobbyist\Enums\SponsorType;
 
 class BillDocumentTest extends TestCase
 {
@@ -28,6 +29,19 @@ class BillDocumentTest extends TestCase
     private function legislator(string $name): Legislator
     {
         return new Legislator(meta: ['id' => 1, 'name' => $name, 'state' => 'PA']);
+    }
+
+    /**
+     * A sponsor the way LegiscanMapper::sponsor() actually builds one: a
+     * Legislator DTO whose meta carries sponsor_type/sponsor_order alongside
+     * the person fields, since neither is a first-class DTO property.
+     */
+    private function sponsor(string $name, SponsorType $type, int $order, ?string $party = null, ?string $district = null): Legislator
+    {
+        return new Legislator(meta: [
+            'id' => 1, 'name' => $name, 'state' => 'PA', 'party' => $party, 'district' => $district,
+            'sponsor_type' => $type, 'sponsor_order' => $order,
+        ]);
     }
 
     public function test_it_renders_sponsors_from_normalized_dtos(): void
@@ -71,6 +85,55 @@ class BillDocumentTest extends TestCase
     public function test_a_bill_without_sponsors_renders_without_the_line(): void
     {
         $this->assertStringNotContainsString('Sponsors:', BillDocument::forBill($this->bill()));
+    }
+
+    public function test_it_separates_the_primary_sponsor_from_co_sponsors(): void
+    {
+        $document = BillDocument::forBill($this->bill([
+            'sponsors' => [
+                $this->sponsor('Marcus Reyes', SponsorType::CoSponsor, 2, party: 'R'),
+                $this->sponsor('Dana Whitfield', SponsorType::Primary, 1, party: 'D', district: '12'),
+            ],
+        ]));
+
+        $this->assertStringContainsString('Primary Sponsor: Dana Whitfield (D-12)', $document);
+        $this->assertStringContainsString('Co-Sponsor: Marcus Reyes (R)', $document);
+    }
+
+    public function test_it_pluralizes_a_group_with_more_than_one_sponsor(): void
+    {
+        $document = BillDocument::forBill($this->bill([
+            'sponsors' => [
+                $this->sponsor('Dana Whitfield', SponsorType::Primary, 1),
+                $this->sponsor('Marcus Reyes', SponsorType::CoSponsor, 2),
+                $this->sponsor('Alice Johnson', SponsorType::CoSponsor, 3),
+            ],
+        ]));
+
+        $this->assertStringContainsString('Co-Sponsors: Marcus Reyes, Alice Johnson', $document);
+    }
+
+    public function test_a_sponsor_with_no_reported_party_shows_no_party(): void
+    {
+        $document = BillDocument::forBill($this->bill([
+            'sponsors' => [$this->sponsor('Dana Whitfield', SponsorType::Primary, 1)],
+        ]));
+
+        $this->assertStringContainsString('Primary Sponsor: Dana Whitfield', $document);
+        $this->assertStringNotContainsString('(O)', $document);
+        $this->assertStringNotContainsString('Whitfield (', $document);
+    }
+
+    public function test_sponsors_with_no_sponsor_type_still_render_the_flat_line(): void
+    {
+        // Unchanged behavior for a DTO built by something other than
+        // LegiscanMapper::sponsor(), which never sets sponsor_type.
+        $document = BillDocument::forBill($this->bill([
+            'sponsors' => [$this->legislator('Dana Whitfield'), $this->legislator('Marcus Reyes')],
+        ]));
+
+        $this->assertStringContainsString('Sponsors: Dana Whitfield, Marcus Reyes', $document);
+        $this->assertStringNotContainsString('Primary Sponsor', $document);
     }
 
     public function test_it_renders_action_history_nested_under_raw(): void

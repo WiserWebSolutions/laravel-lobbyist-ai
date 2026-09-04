@@ -2,10 +2,13 @@
 
 namespace WiserWebSolutions\Lobbyist\Ai\Support;
 
+use Illuminate\Support\Str;
 use WiserWebSolutions\Lobbyist\Data\Bill;
 use WiserWebSolutions\Lobbyist\Data\Legislator;
 use WiserWebSolutions\Lobbyist\Data\LegislatorCollection;
 use WiserWebSolutions\Lobbyist\Data\Vote;
+use WiserWebSolutions\Lobbyist\Enums\Party;
+use WiserWebSolutions\Lobbyist\Enums\SponsorType;
 use WiserWebSolutions\Lobbyist\Legiscan\Support\LegiscanMapper;
 
 /**
@@ -34,8 +37,8 @@ class BillDocument
             $lines[] = "Description: {$bill->description}";
         }
 
-        foreach (self::sponsors($bill->meta) as $sponsors) {
-            $lines[] = 'Sponsors: '.$sponsors;
+        foreach (self::sponsors($bill->meta) as $line) {
+            $lines[] = $line;
         }
 
         $history = self::actionHistory($bill->meta);
@@ -144,6 +147,12 @@ class BillDocument
      * normalized; and plain strings. The unconditional string cast this used to
      * end with was fatal on the first of those.
      *
+     * Only the DTO shape carries sponsor_type/sponsor_order (set by
+     * LegiscanMapper::sponsor() into the DTO's meta, since neither is a
+     * first-class Legislator property), so only that shape gets grouped into
+     * "Primary Sponsor" / "Co-Sponsors" / etc. The other two shapes have
+     * nothing to group by and keep the flat "Sponsors: ..." line.
+     *
      * @return array<int, string>
      */
     private static function sponsors(array $meta): array
@@ -158,11 +167,11 @@ class BillDocument
             return [];
         }
 
-        $names = array_map(function ($sponsor) {
-            if ($sponsor instanceof Legislator) {
-                return $sponsor->name;
-            }
+        if (array_all($sponsors, fn ($s) => $s instanceof Legislator)) {
+            return self::groupedSponsors($sponsors);
+        }
 
+        $names = array_map(function ($sponsor) {
             if (is_array($sponsor)) {
                 return (string) ($sponsor['name'] ?? $sponsor['last_name'] ?? '');
             }
@@ -172,7 +181,61 @@ class BillDocument
 
         $names = array_values(array_filter($names, fn ($n) => $n !== ''));
 
-        return $names === [] ? [] : [implode(', ', array_slice($names, 0, 15))];
+        return $names === [] ? [] : ['Sponsors: '.implode(', ', array_slice($names, 0, 15))];
+    }
+
+    /**
+     * Group normalized sponsors by their role on the bill -- primary sponsor
+     * first, then co-sponsors, etc. -- so the model can describe who actually
+     * introduced a bill rather than reading one undifferentiated name list.
+     *
+     * A sponsor with no sponsor_type (a DTO built by something other than
+     * LegiscanMapper::sponsor()) falls into a generic group labelled the same
+     * "Sponsors:" the flat fallback above uses, so a caller that never set
+     * sponsor_type sees unchanged output.
+     *
+     * @param  array<int, Legislator>  $sponsors
+     * @return array<int, string>
+     */
+    private static function groupedSponsors(array $sponsors): array
+    {
+        $ordered = collect($sponsors)->sortBy(fn (Legislator $s) => $s->meta['sponsor_order'] ?? PHP_INT_MAX);
+
+        $groups = $ordered->groupBy(function (Legislator $s) {
+            $type = $s->meta['sponsor_type'] ?? null;
+
+            return $type instanceof SponsorType ? $type->value : SponsorType::Sponsor->value;
+        });
+
+        $lines = [];
+        foreach ($groups as $typeValue => $group) {
+            $isGeneric = $typeValue === SponsorType::Sponsor->value;
+            $label = $isGeneric
+                ? 'Sponsors'
+                : ($group->count() > 1 ? Str::plural(SponsorType::from($typeValue)->label()) : SponsorType::from($typeValue)->label());
+
+            $names = $group->map(fn (Legislator $s) => self::describeSponsor($s))->implode(', ');
+            $lines[] = "{$label}: {$names}";
+        }
+
+        return $lines;
+    }
+
+    /**
+     * A sponsor's name, with party and district appended when known.
+     *
+     * Party::Other covers both a genuinely "other" party and an unset one
+     * (Party::fromString(null) resolves there too), so it is treated as
+     * unknown here rather than printed as "(O)" on every sponsor a driver
+     * never reported a party for.
+     */
+    private static function describeSponsor(Legislator $sponsor): string
+    {
+        $party = $sponsor->party === Party::Other ? null : $sponsor->party->value;
+
+        $suffix = implode('-', array_filter([$party, $sponsor->district], fn ($v) => $v !== null && $v !== ''));
+
+        return $suffix === '' ? $sponsor->name : "{$sponsor->name} ({$suffix})";
     }
 
     /**
