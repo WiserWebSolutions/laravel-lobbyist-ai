@@ -2,11 +2,13 @@
 
 namespace WiserWebSolutions\Lobbyist\Ai\Tests;
 
+use Illuminate\Support\Facades\DB;
 use Laravel\Ai\Ai;
 use Laravel\Ai\Files\Document;
 use WiserWebSolutions\Lobbyist\Ai\Agents\BillClassifierAgent;
 use WiserWebSolutions\Lobbyist\Ai\Agents\BillSummaryAgent;
 use WiserWebSolutions\Lobbyist\Ai\Agents\LegislativeAssistant;
+use WiserWebSolutions\Lobbyist\Ai\Contracts\EmbeddingStore;
 use WiserWebSolutions\Lobbyist\Facades\Lobbyist;
 
 class AiFeaturesTest extends TestCase
@@ -118,5 +120,57 @@ class AiFeaturesTest extends TestCase
 
         $this->assertNotEmpty($results);
         $this->assertSame('HB100', $results[0]['meta']['bill_number']);
+    }
+
+    public function test_index_documents_indexes_arbitrary_rows_without_a_driver(): void
+    {
+        Ai::fakeEmbeddings(fn ($prompt) => array_map(
+            fn () => [1.0, 0.0, 0.0], $prompt->inputs
+        ));
+
+        $result = $this->manager()->indexDocuments([
+            ['id' => 'PA:1', 'document' => 'Bill: HB100 -- stormwater', 'meta' => ['state' => 'PA', 'bill_number' => 'HB100']],
+            ['id' => 'PA:2', 'document' => 'Bill: SB2 -- transportation', 'meta' => ['state' => 'PA', 'bill_number' => 'SB2']],
+        ]);
+
+        $this->assertSame(['indexed' => 2, 'skipped' => 0], $result);
+
+        $store = $this->app->make(EmbeddingStore::class);
+        $stored = $store->get('PA:1');
+
+        $this->assertNotNull($stored);
+        $this->assertSame('HB100', $stored['meta']['bill_number']);
+    }
+
+    public function test_index_documents_skips_unchanged_content_hashes(): void
+    {
+        Ai::fakeEmbeddings(fn ($prompt) => array_map(
+            fn () => [1.0, 0.0, 0.0], $prompt->inputs
+        ));
+
+        $rows = [
+            ['id' => 'PA:1', 'document' => 'Bill: HB100 -- stormwater', 'meta' => ['state' => 'PA']],
+        ];
+
+        $this->manager()->indexDocuments($rows);
+        $result = $this->manager()->indexDocuments($rows);
+
+        $this->assertSame(['indexed' => 0, 'skipped' => 1], $result);
+    }
+
+    public function test_index_documents_records_provider_and_model(): void
+    {
+        Ai::fakeEmbeddings(fn ($prompt) => array_map(
+            fn () => [1.0, 0.0, 0.0], $prompt->inputs
+        ));
+
+        $this->manager()->indexDocuments([
+            ['id' => 'PA:1', 'document' => 'Bill: HB100 -- stormwater', 'meta' => ['state' => 'PA']],
+        ]);
+
+        $stored = DB::table('lobbyist_ai_bill_embeddings')->where('id', 'PA:1')->first();
+
+        $this->assertNotNull($stored->provider);
+        $this->assertNotNull($stored->model);
     }
 }

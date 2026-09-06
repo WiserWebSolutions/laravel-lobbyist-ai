@@ -4,6 +4,7 @@ namespace WiserWebSolutions\Lobbyist\Ai;
 
 use Illuminate\Support\Facades\Cache;
 use Laravel\Ai\Embeddings;
+use Laravel\Ai\Responses\EmbeddingsResponse;
 use Laravel\Ai\Responses\StreamableAgentResponse;
 use WiserWebSolutions\Lobbyist\Ai\Agents\BillClassifierAgent;
 use WiserWebSolutions\Lobbyist\Ai\Agents\BillSummaryAgent;
@@ -140,6 +141,14 @@ class LobbyistAiManager
     /**
      * Embed and index every (new or changed) bill for a state into the store.
      *
+     * A thin wrapper over {@see self::indexDocuments()} for a caller that
+     * wants this package to fetch the bills itself, via the driver -- the
+     * only case that suits a caller with no local mirror of its own. A
+     * caller that already holds the bills (as boardadvocate does, having
+     * synced them) should call {@see self::indexDocuments()} directly:
+     * routing through here would mean an extra, metered driver fetch of data
+     * already on hand.
+     *
      * @return array{state: string, indexed: int, skipped: int, total: int}
      */
     public function index(string $state): array
@@ -151,45 +160,74 @@ class LobbyistAiManager
         }
 
         $bills = $driver->bills();
+
+        $rows = [];
+        foreach ($bills as $bill) {
+            $rows[] = [
+                'id' => strtoupper($state).':'.$bill->id,
+                'document' => BillDocument::forBill($bill),
+                'meta' => [
+                    'state' => strtoupper($state),
+                    'bill_number' => $bill->number,
+                    'title' => $bill->title,
+                    'url' => $bill->url,
+                ],
+            ];
+        }
+
+        $result = $this->indexDocuments($rows);
+
+        return ['state' => strtoupper($state), ...$result, 'total' => $bills->count()];
+    }
+
+    /**
+     * Embed and index arbitrary already-fetched documents into the store,
+     * skipping any whose content hash is unchanged since it was last indexed.
+     *
+     * The primitive {@see self::index()} is built on. Exists so a caller that
+     * already holds its own corpus -- a synced mirror, not a live driver
+     * fetch -- can index it without this package spending a metered call to
+     * refetch data it does not need.
+     *
+     * @param  iterable<int, array{id: string, document: string, meta: array<string, mixed>}>  $rows
+     * @return array{indexed: int, skipped: int}
+     */
+    public function indexDocuments(iterable $rows): array
+    {
         $store = $this->store();
         $pending = [];
         $skipped = 0;
 
-        foreach ($bills as $bill) {
-            $document = BillDocument::forBill($bill);
-            $hash = md5($document);
-            $id = strtoupper($state).':'.$bill->id;
+        foreach ($rows as $row) {
+            $hash = md5($row['document']);
 
-            if ($store->has($id, $hash)) {
+            if ($store->has($row['id'], $hash)) {
                 $skipped++;
 
                 continue;
             }
 
-            $pending[] = ['id' => $id, 'document' => $document, 'hash' => $hash, 'bill' => $bill];
+            $pending[] = ['id' => $row['id'], 'document' => $row['document'], 'meta' => $row['meta'], 'hash' => $hash];
         }
 
         $indexed = 0;
 
         foreach (array_chunk($pending, 50) as $chunk) {
-            $vectors = $this->embed(array_map(fn ($row) => $row['document'], $chunk));
+            $response = $this->embedWithMeta(array_map(fn ($row) => $row['document'], $chunk));
 
-            foreach (array_values($chunk) as $i => $row) {
-                /** @var Bill $bill */
-                $bill = $row['bill'];
+            $store->upsertMany(array_map(fn ($row, $vector) => [
+                'id' => $row['id'],
+                'vector' => $vector,
+                'meta' => $row['meta'],
+                'contentHash' => $row['hash'],
+                'provider' => $response->meta->provider,
+                'model' => $response->meta->model,
+            ], array_values($chunk), $response->embeddings));
 
-                $store->upsert($row['id'], $vectors[$i], [
-                    'state' => strtoupper($state),
-                    'bill_number' => $bill->number,
-                    'title' => $bill->title,
-                    'url' => $bill->url,
-                ], $row['hash']);
-
-                $indexed++;
-            }
+            $indexed += count($chunk);
         }
 
-        return ['state' => strtoupper($state), 'indexed' => $indexed, 'skipped' => $skipped, 'total' => $bills->count()];
+        return ['indexed' => $indexed, 'skipped' => $skipped];
     }
 
     // -----------------------------------------------------------------
@@ -219,6 +257,19 @@ class LobbyistAiManager
      */
     public function embed(array $texts): array
     {
+        return $this->embedWithMeta($texts)->embeddings;
+    }
+
+    /**
+     * {@see self::embed()}, keeping the response's provider/model metadata --
+     * needed by {@see self::indexDocuments()} so a stored embedding carries
+     * the same provenance as {@see self::summarizeBill()} and
+     * {@see self::classifyBill()} do.
+     *
+     * @param  array<int, string>  $texts
+     */
+    protected function embedWithMeta(array $texts): EmbeddingsResponse
+    {
         $pending = Embeddings::for($texts);
 
         if ($dimensions = ($this->config['embeddings']['dimensions'] ?? null)) {
@@ -227,7 +278,7 @@ class LobbyistAiManager
 
         return $pending->generate(
             $this->config['embeddings']['provider'] ?? null,
-        )->embeddings;
+        );
     }
 
     protected function store(): EmbeddingStore

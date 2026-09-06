@@ -70,6 +70,61 @@ class BillDocument
         return implode("\n", $lines);
     }
 
+    /**
+     * A short, similarity-shaped rendering of a bill, for embeddings rather
+     * than prompts.
+     *
+     * Deliberately narrower than {@see self::forBill()}. That method is right
+     * for its own job -- a model answering a question needs the status,
+     * action history, votes and citations -- but every one of those is
+     * procedural: "Referred to APPROPRIATIONS", "Laid on the table",
+     * "Re-committed to RULES" recur near-identically across thousands of
+     * bills that have nothing else in common. In a low-dimension embedding,
+     * that procedural boilerplate crowds out the actual subject matter, so
+     * two unrelated bills that merely took the same path through committee
+     * would score as similar. This method embeds only what is substantive:
+     * what the bill is, not what has happened to it.
+     *
+     * Full bill text is excluded too, and not only for brevity: a typical
+     * bill's text is dominated by verbatim reproduction of the statute it
+     * amends, so full-text embeddings would cluster by which statute is
+     * touched rather than by what the amendment does.
+     *
+     * `$subjects`/`$tags` are optional and are the caller's responsibility to
+     * supply consistently -- a corpus where only some documents carry them
+     * will bias toward clustering the ones that do. Most callers embedding an
+     * entire corpus at once should pass neither and rely on title/description
+     * alone, which every bill has.
+     *
+     * @param  array<int, string>  $subjects
+     * @param  array<int, string>  $tags
+     */
+    public static function forEmbedding(Bill $bill, array $subjects = [], array $tags = []): string
+    {
+        $lines = [];
+        $chamber = $bill->chamber?->label();
+        $lines[] = trim("Bill: {$bill->number} ({$bill->state->label()}".($chamber ? " {$chamber}" : '').')');
+
+        if ($bill->title !== '') {
+            $lines[] = "Title: {$bill->title}";
+        }
+        if ($bill->description !== '') {
+            $lines[] = "Description: {$bill->description}";
+        }
+
+        $subjects = array_values(array_filter($subjects, fn ($s) => is_string($s) && $s !== ''));
+        if ($subjects !== []) {
+            $lines[] = 'Subjects: '.implode(', ', $subjects);
+        }
+
+        $tags = array_values(array_filter($tags, fn ($t) => is_string($t) && $t !== ''));
+        if ($tags !== []) {
+            $lines[] = 'Tags: '.implode(', ', $tags);
+        }
+
+        return implode("\n", $lines);
+    }
+
     public static function forVote(Vote $vote): string
     {
         $lines = [];

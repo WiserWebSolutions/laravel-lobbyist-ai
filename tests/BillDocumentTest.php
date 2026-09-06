@@ -222,4 +222,102 @@ class BillDocumentTest extends TestCase
     {
         $this->assertStringNotContainsString('Official documents', BillDocument::forBill($this->bill()));
     }
+
+    // -----------------------------------------------------------------
+    // forEmbedding() -- a narrower, similarity-shaped rendering
+    // -----------------------------------------------------------------
+
+    public function test_for_embedding_includes_number_title_and_description(): void
+    {
+        $document = BillDocument::forEmbedding($this->bill([
+            'description' => 'Establishes minimum stormwater management standards.',
+        ]));
+
+        $this->assertStringContainsString('HB100', $document);
+        $this->assertStringContainsString('An act concerning stormwater', $document);
+        $this->assertStringContainsString('Establishes minimum stormwater management standards.', $document);
+    }
+
+    public function test_for_embedding_excludes_status_and_last_action(): void
+    {
+        $document = BillDocument::forEmbedding($this->bill([
+            'status' => 'Introduced',
+            'last_action' => 'Referred to APPROPRIATIONS',
+        ]));
+
+        $this->assertStringNotContainsString('Status:', $document);
+        $this->assertStringNotContainsString('Last action:', $document);
+        $this->assertStringNotContainsString('APPROPRIATIONS', $document);
+    }
+
+    public function test_for_embedding_excludes_action_history(): void
+    {
+        $document = BillDocument::forEmbedding($this->bill([
+            'raw' => ['history' => [['date' => '2026-01-08', 'action' => 'Referred to Education']]],
+        ]));
+
+        $this->assertStringNotContainsString('Action history', $document);
+        $this->assertStringNotContainsString('Referred to Education', $document);
+    }
+
+    public function test_for_embedding_excludes_votes(): void
+    {
+        $document = BillDocument::forEmbedding($this->bill([
+            'votes' => [new Vote(meta: [
+                'id' => 1, 'chamber' => Chamber::House, 'date' => '2026-03-01',
+                'description' => 'Third consideration', 'yea' => 120, 'nay' => 80, 'passed' => true,
+            ])],
+        ]));
+
+        $this->assertStringNotContainsString('Votes:', $document);
+        $this->assertStringNotContainsString('Third consideration', $document);
+    }
+
+    public function test_for_embedding_excludes_official_document_citations(): void
+    {
+        $document = BillDocument::forEmbedding($this->bill([
+            'supplements' => [
+                ['description' => 'Fiscal Note', 'url' => 'https://example.test/fn.pdf'],
+            ],
+        ]));
+
+        $this->assertStringNotContainsString('Official documents', $document);
+        $this->assertStringNotContainsString('Fiscal Note', $document);
+    }
+
+    public function test_for_embedding_excludes_sponsors_even_when_present(): void
+    {
+        // Sponsors matter for cosponsor-gap analysis, but not for what makes
+        // two bills topically similar, so they stay out of the vector too.
+        $document = BillDocument::forEmbedding($this->bill([
+            'sponsors' => [$this->legislator('Dana Whitfield')],
+        ]));
+
+        $this->assertStringNotContainsString('Sponsors:', $document);
+        $this->assertStringNotContainsString('Whitfield', $document);
+    }
+
+    public function test_for_embedding_includes_subjects_and_tags_only_when_passed(): void
+    {
+        $withoutClassification = BillDocument::forEmbedding($this->bill());
+        $this->assertStringNotContainsString('Subjects:', $withoutClassification);
+        $this->assertStringNotContainsString('Tags:', $withoutClassification);
+
+        $withClassification = BillDocument::forEmbedding(
+            $this->bill(),
+            subjects: ['Education', 'Public Health'],
+            tags: ['school-funding'],
+        );
+
+        $this->assertStringContainsString('Subjects: Education, Public Health', $withClassification);
+        $this->assertStringContainsString('Tags: school-funding', $withClassification);
+    }
+
+    public function test_for_embedding_ignores_blank_subjects_and_tags(): void
+    {
+        $document = BillDocument::forEmbedding($this->bill(), subjects: ['', 'Education'], tags: ['']);
+
+        $this->assertStringContainsString('Subjects: Education', $document);
+        $this->assertStringNotContainsString('Tags:', $document);
+    }
 }

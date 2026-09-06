@@ -13,7 +13,19 @@ return new class extends Migration
             $table->string('id')->primary();       // e.g. "PA:20250HB0017"
             $table->string('state')->nullable()->index();
             $table->longText('meta');               // JSON: bill_number, title, url, ...
-            $table->longText('vector');             // JSON array of floats
+            // Binary float32 (see Support\Vector::pack()), not JSON: a 256-dim
+            // vector packs to 1 KB versus ~15 KB as a JSON array of PHP floats,
+            // which is what makes reading a whole state's corpus into memory for
+            // a similarity pass affordable rather than a multi-hundred-MB decode.
+            $table->binary('vector');
+            // A 256-bit sign-bit summary of the vector (Support\Vector::signature()),
+            // compared by cheap Hamming distance to prefilter a large corpus down to
+            // a few hundred candidates before the exact dot-product rerank. Exhaustive
+            // exact scoring across a full state's bills is not viable in PHP.
+            $table->binary('signature');
+            $table->unsignedSmallInteger('dims');
+            $table->string('provider')->nullable();
+            $table->string('model')->nullable();
             $table->string('content_hash', 32);     // md5 of the source document (incremental indexing)
             $table->timestamps();
         });
